@@ -16,6 +16,8 @@ jobs:
     runs-on: windows-latest
     env:
       CONFIG: RelWithDebInfo
+      TRIPLET: x64-windows
+      VCPKG_ROOT: ${{ runner.temp }}\vcpkg
 
     steps:
       - name: Checkout this repo (contains only packet-asterix.c)
@@ -29,6 +31,54 @@ jobs:
           choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install -y nsis 7zip
 
+      # --- vcpkg: clone (to compute a stable cache key) -----------------------
+      - name: Prepare vcpkg (clone to get commit for cache key)
+        id: vcpkg_prep
+        shell: powershell
+        run: |
+          git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+          Push-Location $env:VCPKG_ROOT
+          $commit = (git rev-parse HEAD).Trim()
+          Pop-Location
+          "commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # Cache vcpkg installed packages and downloads
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}\installed
+            ${{ env.VCPKG_ROOT }}\downloads
+          key: vcpkg-${{ steps.vcpkg_prep.outputs.commit }}-${{ env.TRIPLET }}-glib-gcrypt-gpgerror-pkgconf
+          restore-keys: |
+            vcpkg-${{ steps.vcpkg_prep.outputs.commit }}-${{ env.TRIPLET }}-
+            vcpkg-${{ env.TRIPLET }}-
+
+      - name: Bootstrap vcpkg
+        shell: powershell
+        run: |
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
+
+      - name: Install deps via vcpkg (x64-windows)
+        shell: powershell
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install glib:${{ env.TRIPLET }} pkgconf:${{ env.TRIPLET }} `
+                                             libgcrypt:${{ env.TRIPLET }} libgpg-error:${{ env.TRIPLET }}
+
+      # Expose pkg-config + prefix so CMake's find modules see vcpkg
+      - name: Set up pkg-config env
+        shell: powershell
+        run: |
+          $pkgconf = Join-Path $env:VCPKG_ROOT 'installed\${{ env.TRIPLET }}\tools\pkgconf\pkgconf.exe'
+          $pc1     = Join-Path $env:VCPKG_ROOT 'installed\${{ env.TRIPLET }}\lib\pkgconfig'
+          $pc2     = Join-Path $env:VCPKG_ROOT 'installed\${{ env.TRIPLET }}\share\pkgconfig'
+          $prefixFw = ($env:VCPKG_ROOT -replace '\\','/')
+          Add-Content $env:GITHUB_ENV "PKG_CONFIG=$pkgconf"
+          Add-Content $env:GITHUB_ENV "PKG_CONFIG_PATH=$pc1;$pc2"
+          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$($env:VCPKG_ROOT)\installed\${{ env.TRIPLET }}"
+          Add-Content $env:GITHUB_ENV "VCPKG_PREFIX_FW=$prefixFw"
+
+      # --- Clone Wireshark and drop in your custom dissector ------------------
       - name: Clone Wireshark sources
         shell: bash
         run: |
@@ -40,58 +90,4 @@ jobs:
       - name: Inject custom packet-asterix.c
         shell: powershell
         run: |
-          Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
-
-      # --- vcpkg classic mode: install GLib + pkgconf -------------------------
-      - name: Bootstrap vcpkg
-        shell: powershell
-        run: |
-          git clone https://github.com/microsoft/vcpkg $env:RUNNER_TEMP\vcpkg
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat"
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-
-      - name: Install GLib and pkgconf via vcpkg (x64-windows)
-        shell: powershell
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install glib:x64-windows pkgconf:x64-windows
-
-      # Expose pkg-config and .pc paths so CMake's FindGLIB2 works
-      - name: Set up pkg-config env
-        id: pcvars
-        shell: powershell
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-        run: |
-          $pkgconf = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\tools\pkgconf\pkgconf.exe'
-          $pc1     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\lib\pkgconfig'
-          $pc2     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\share\pkgconfig'
-          echo "PKG_CONFIG=$pkgconf"            | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "PKG_CONFIG_PATH=$pc1;$pc2"      | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CMAKE_PREFIX_PATH=$($env:VCPKG_ROOT)\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      # --- Configure & build with MSVC (no Ninja needed) ----------------------
-      - name: Configure (CMake + VS 2022 x64)
-        shell: bash
-        run: |
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64
-
-      - name: Build Wireshark
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark
-
-      - name: Prep NSIS packaging
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark_nsis_prep
-
-      - name: Build NSIS installer
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark_nsis
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wireshark-installer
-          path: build/packaging/nsis/*.exe
+          Copy-Item -Force ".\packet
