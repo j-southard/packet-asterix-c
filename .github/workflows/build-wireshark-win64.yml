@@ -72,7 +72,7 @@ jobs:
           Set-ExecutionPolicy -Scope Process Bypass -Force
           Push-Location .\wireshark
           $cmake = (Get-Command cmake).Source
-          .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -Platform win64 -CMakeExecutable "$cmake"
+          .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -Platform x64 -CMakeExecutable "$cmake"
           Pop-Location
 
       # Use cmd.exe so no MSYS2 env leaks into the build
