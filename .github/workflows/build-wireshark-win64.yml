@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Wireshark downloads third-party libs (except Qt) under this base dir
+      # Where Wireshark's dependency bundle gets downloaded/unpacked by win-setup.ps1
       WIRESHARK_BASE_DIR: C:\Development
 
     steps:
@@ -42,6 +42,7 @@ jobs:
       - name: Export Qt dir for Wireshark
         shell: powershell
         run: |
+          # install-qt-action sets QT_ROOT_DIR automatically
           "WIRESHARK_QT6_PREFIX_PATH=$env:QT_ROOT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create base dir for downloaded libs
@@ -63,17 +64,27 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
-      # Use cmd.exe so MSYS2 env vars don't leak into CMake
+      - name: Fetch Wireshark 3rd-party libs (win-setup.ps1)
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          Push-Location .\wireshark
+          # Fetch prebuilt deps for MSVC x64; we already installed Qt, so skip it
+          .\tools\win-setup.ps1 -Destination $env:WIRESHARK_BASE_DIR -InstallQt NO -Arch x64
+          Pop-Location
+
+      # Use cmd.exe so no MSYS2 env leaks into the build (avoids "Using MSYS2..." noise)
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
         run: |
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%"
+          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 ^
+            -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%"
 
       - name: Build Wireshark
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark
 
-      # Optional installer (keep or remove these next two steps)
+      # --- Optional: create regular installer (keep or delete if not needed) ---
       - name: Prep NSIS packaging
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark_nsis_prep
@@ -95,15 +106,16 @@ jobs:
           $runDir = "build\run\RelWithDebInfo"
           if (!(Test-Path $runDir)) { throw "Run dir not found: $runDir" }
 
-          # Make a tiny launcher that isolates config beside the EXE
+          # Tiny launcher that keeps prefs beside the EXE (no clash with installed Wireshark)
           $launcher = Join-Path $runDir "Wireshark-Portable.cmd"
-          @"
-@echo off
-setlocal
-set "WIRESHARK_CONFIG_DIR=%~dp0config"
-if not exist "%WIRESHARK_CONFIG_DIR%" mkdir "%WIRESHARK_CONFIG_DIR%"
-start "" "%~dp0Wireshark.exe" %*
-"@ | Out-File -Encoding ASCII $launcher
+          $lines = @(
+            '@echo off'
+            'setlocal'
+            'set "WIRESHARK_CONFIG_DIR=%~dp0config"'
+            'if not exist "%WIRESHARK_CONFIG_DIR%" mkdir "%WIRESHARK_CONFIG_DIR%"'
+            'start "" "%~dp0Wireshark.exe" %*'
+          )
+          $lines | Set-Content -Encoding Ascii $launcher
 
           # Zip the self-contained run directory
           7z a -r "build\wireshark-portable-win64.zip" "$runDir\*"
