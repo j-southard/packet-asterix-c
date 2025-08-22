@@ -42,6 +42,7 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
+      # --- vcpkg classic mode: install GLib + pkgconf -------------------------
       - name: Bootstrap vcpkg
         shell: powershell
         run: |
@@ -50,15 +51,32 @@ jobs:
         env:
           VCPKG_ROOT: ${{ runner.temp }}\vcpkg
 
-      - name: Configure (CMake + VS 2022 x64 via vcpkg)
-        shell: bash
+      - name: Install GLib and pkgconf via vcpkg (x64-windows)
+        shell: powershell
         env:
           VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-          VCPKG_FEATURE_FLAGS: "manifests,versions"
         run: |
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+          & "$env:VCPKG_ROOT\vcpkg.exe" install glib:x64-windows pkgconf:x64-windows
+
+      # Expose pkg-config and .pc paths so CMake's FindGLIB2 works
+      - name: Set up pkg-config env
+        id: pcvars
+        shell: powershell
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
+        run: |
+          $pkgconf = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\tools\pkgconf\pkgconf.exe'
+          $pc1     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\lib\pkgconfig'
+          $pc2     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\share\pkgconfig'
+          echo "PKG_CONFIG=$pkgconf"            | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "PKG_CONFIG_PATH=$pc1;$pc2"      | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$($env:VCPKG_ROOT)\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # --- Configure & build with MSVC (no Ninja needed) ----------------------
+      - name: Configure (CMake + VS 2022 x64)
+        shell: bash
+        run: |
+          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64
 
       - name: Build Wireshark
         shell: bash
