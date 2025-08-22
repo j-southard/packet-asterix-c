@@ -1,0 +1,62 @@
+name: Build Wireshark Win64 (custom asterix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      WIRESHARK_TAG:
+        description: "Wireshark git tag (e.g., v4.4.8)"
+        required: false
+        default: "v4.4.8"
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-win64:
+    runs-on: windows-latest
+    env:
+      CONFIG: RelWithDebInfo
+    steps:
+      - name: Checkout this repo (contains only packet-asterix.c)
+        uses: actions/checkout@v4
+
+      - name: Install build tools (CMake, Ninja, NSIS)
+        shell: powershell
+        run: |
+          choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+          choco install -y ninja nsis 7zip
+
+      - name: Clone Wireshark sources
+        shell: bash
+        run: |
+          git clone https://gitlab.com/wireshark/wireshark.git
+          cd wireshark
+          git fetch --tags --force
+          git checkout "${{ github.event.inputs.WIRESHARK_TAG || 'v4.4.8' }}"
+
+      - name: Inject custom packet-asterix.c
+        shell: powershell
+        run: |
+          Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
+
+      - name: Configure (CMake + Ninja Multi-Config)
+        shell: bash
+        run: |
+          cmake -S wireshark -B build -G "Ninja Multi-Config" -A x64
+
+      - name: Build Wireshark
+        shell: bash
+        run: cmake --build build --config "$CONFIG" --target wireshark
+
+      - name: Prep NSIS packaging
+        shell: bash
+        run: cmake --build build --config "$CONFIG" --target wireshark_nsis_prep
+
+      - name: Build NSIS installer
+        shell: bash
+        run: cmake --build build --config "$CONFIG" --target wireshark_nsis
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wireshark-installer
+          path: build/packaging/nsis/*.exe
