@@ -1,4 +1,3 @@
-# .github/workflows/build-wireshark-win64.yml
 name: Build Wireshark Win64 (custom asterix)
 
 on:
@@ -13,12 +12,17 @@ on:
 
 jobs:
   build-win64:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
+      QT_VERSION: 6.8.3
+      QT_ARCH: win64_msvc2022_64
+      QT_DIR: ${{ github.workspace }}\Qt
+      # Let CMake decide the libs folder name under this base dir:
+      WIRESHARK_BASE_DIR: C:\Development
 
     steps:
-      - name: Checkout this repo (contains only packet-asterix.c)
+      - name: Checkout (repo contains packet-asterix.c)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -27,7 +31,29 @@ jobs:
         shell: powershell
         run: |
           choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-          choco install -y nsis 7zip
+          choco install -y nsis 7zip winflexbison3
+
+      # Install Qt 6 for MSVC 2022 x64
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          target: desktop
+          arch: ${{ env.QT_ARCH }}
+          dir: ${{ env.QT_DIR }}
+          cache: true
+
+      # Point Wireshark to Qt (per docs you can use CMAKE_PREFIX_PATH or WIRESHARK_QT6_PREFIX_PATH)
+      - name: Set Qt env for CMake
+        shell: powershell
+        run: |
+          $qt = Join-Path "${{ env.QT_DIR }}" "6.8.3\msvc2022_64"
+          if (-not (Test-Path $qt)) { throw "Qt path not found: $qt" }
+          "WIRESHARK_QT6_PREFIX_PATH=$qt" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Make base dir for Wireshark libs
+        shell: powershell
+        run: New-Item -ItemType Directory -Force "C:\Development" | Out-Null
 
       - name: Clone Wireshark sources
         shell: bash
@@ -42,60 +68,8 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
-      # --- vcpkg: bootstrap and install required deps -------------------------
-      - name: Bootstrap vcpkg
-        shell: powershell
-        run: |
-          git clone https://github.com/microsoft/vcpkg $env:RUNNER_TEMP\vcpkg
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat"
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-
-      - name: Install deps via vcpkg (x64-windows)
-        shell: powershell
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install glib:x64-windows pkgconf:x64-windows `
-                                             libgcrypt:x64-windows libgpg-error:x64-windows
-
-      # Expose pkg-config and .pc paths + a forward-slash prefix for bash
-      - name: Set up pkg-config env
-        shell: powershell
-        env:
-          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
-        run: |
-          $pkgconf = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\tools\pkgconf\pkgconf.exe'
-          $pc1     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\lib\pkgconfig'
-          $pc2     = Join-Path $env:VCPKG_ROOT 'installed\x64-windows\share\pkgconfig'
-          $prefixFw = ($env:VCPKG_ROOT -replace '\\','/')
-          Add-Content $env:GITHUB_ENV "PKG_CONFIG=$pkgconf"
-          Add-Content $env:GITHUB_ENV "PKG_CONFIG_PATH=$pc1;$pc2"
-          Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$($env:VCPKG_ROOT)\installed\x64-windows"
-          Add-Content $env:GITHUB_ENV "VCPKG_PREFIX_FW=$prefixFw"
-
-      # --- Configure & build with MSVC (no Ninja needed) ----------------------
-      - name: Configure (CMake + VS 2022 x64)
+      # Clear MSYS2 noise so we don't get "Using MSYS2 with MSYSTEM=MINGW64"
+      - name: Configure (CMake + VS 2022 x64; let CMake fetch Wireshark libs)
         shell: bash
         run: |
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 \
-            -DGCRYPT_INCLUDE_DIR="$VCPKG_PREFIX_FW/installed/x64-windows/include" \
-            -DGCRYPT_LIBRARY="$VCPKG_PREFIX_FW/installed/x64-windows/lib/libgcrypt.lib"
-
-      - name: Build Wireshark
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark
-
-      - name: Prep NSIS packaging
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark_nsis_prep
-
-      - name: Build NSIS installer
-        shell: bash
-        run: cmake --build build --config "$CONFIG" --target wireshark_nsis
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wireshark-installer
-          path: build/packaging/nsis/*.exe
+          unset MSYSTEM MSYS2_PATH_TYP
