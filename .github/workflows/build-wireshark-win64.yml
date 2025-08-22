@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Where Wireshark will place/download 3rd-party libs (GLib, Gcrypt, etc.)
+      # Wireshark downloads third-party libs (except Qt) under this base dir
       WIRESHARK_BASE_DIR: C:\Development
 
     steps:
@@ -42,7 +42,6 @@ jobs:
       - name: Export Qt dir for Wireshark
         shell: powershell
         run: |
-          # install-qt-action sets QT_ROOT_DIR automatically.
           "WIRESHARK_QT6_PREFIX_PATH=$env:QT_ROOT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create base dir for downloaded libs
@@ -64,7 +63,7 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
-      # Use cmd.exe so no MSYS2 env leaks into CMake (avoids "Using MSYS2..." noise)
+      # Use cmd.exe so MSYS2 env vars don't leak into CMake
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
         run: |
@@ -74,6 +73,7 @@ jobs:
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark
 
+      # Optional installer (keep or remove these next two steps)
       - name: Prep NSIS packaging
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark_nsis_prep
@@ -87,3 +87,29 @@ jobs:
         with:
           name: wireshark-installer
           path: build/packaging/nsis/*.exe
+
+      # ---- Portable (no installer): zip run\RelWithDebInfo -------------------
+      - name: Create portable launcher and ZIP
+        shell: powershell
+        run: |
+          $runDir = "build\run\RelWithDebInfo"
+          if (!(Test-Path $runDir)) { throw "Run dir not found: $runDir" }
+
+          # Make a tiny launcher that isolates config beside the EXE
+          $launcher = Join-Path $runDir "Wireshark-Portable.cmd"
+          @"
+@echo off
+setlocal
+set "WIRESHARK_CONFIG_DIR=%~dp0config"
+if not exist "%WIRESHARK_CONFIG_DIR%" mkdir "%WIRESHARK_CONFIG_DIR%"
+start "" "%~dp0Wireshark.exe" %*
+"@ | Out-File -Encoding ASCII $launcher
+
+          # Zip the self-contained run directory
+          7z a -r "build\wireshark-portable-win64.zip" "$runDir\*"
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wireshark-portable
+          path: build/wireshark-portable-win64.zip
