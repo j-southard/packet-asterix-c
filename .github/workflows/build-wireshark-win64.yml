@@ -18,7 +18,7 @@ jobs:
       CONFIG: RelWithDebInfo
       # Parent folder for libraries
       WIRESHARK_BASE_DIR: C:\Development
-      # Must match pattern wireshark-*-libs-4.4 (required by win-setup.ps1)
+      # For Wireshark 4.4.x the libs dir must match this pattern
       WIRESHARK_LIBS_DIR: C:\Development\wireshark-win64-libs-4.4
 
     steps:
@@ -33,6 +33,7 @@ jobs:
           choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install -y nsis 7zip winflexbison3
 
+      # Install Qt 6 + required add-ons for Wireshark (Core5Compat, Multimedia, Tools, debug info)
       - name: Install Qt 6 (MSVC 2022 x64)
         uses: jurplel/install-qt-action@v4
         with:
@@ -40,6 +41,7 @@ jobs:
           target: 'desktop'
           arch: 'win64_msvc2022_64'
           cache: true
+          modules: 'qt5compat qtmultimedia qttools debug_info'
 
       - name: Export Qt dir for Wireshark
         shell: powershell
