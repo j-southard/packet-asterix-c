@@ -1,3 +1,4 @@
+# .github/workflows/build-wireshark-win64.yml
 name: Build Wireshark Win64 (custom asterix)
 
 on:
@@ -15,15 +16,18 @@ jobs:
     runs-on: windows-latest
     env:
       CONFIG: RelWithDebInfo
+
     steps:
       - name: Checkout this repo (contains only packet-asterix.c)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install build tools (CMake, Ninja, NSIS)
+      - name: Install build tools (CMake, NSIS)
         shell: powershell
         run: |
           choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-          choco install -y ninja nsis 7zip
+          choco install -y nsis 7zip
 
       - name: Clone Wireshark sources
         shell: bash
@@ -38,10 +42,10 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
-      - name: Configure (CMake + Ninja Multi-Config)
+      - name: Configure (CMake + VS 2022 x64)
         shell: bash
         run: |
-          cmake -S wireshark -B build -G "Ninja Multi-Config" -A x64
+          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64
 
       - name: Build Wireshark
         shell: bash
