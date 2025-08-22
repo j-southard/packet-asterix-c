@@ -16,9 +16,9 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Parent folder for Wireshark libs
+      # Parent folder for libraries
       WIRESHARK_BASE_DIR: C:\Development
-      # The libs directory MUST match *[/\]wireshark-*-libs-4.4
+      # Must match pattern wireshark-*-libs-4.4 (required by win-setup.ps1)
       WIRESHARK_LIBS_DIR: C:\Development\wireshark-win64-libs-4.4
 
     steps:
@@ -71,7 +71,8 @@ jobs:
         run: |
           Set-ExecutionPolicy -Scope Process Bypass -Force
           Push-Location .\wireshark
-          .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -InstallQt NO -Arch x64
+          $cmake = (Get-Command cmake).Source
+          .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -Platform win64 -CMakeExecutable "$cmake"
           Pop-Location
 
       # Use cmd.exe so no MSYS2 env leaks into the build
