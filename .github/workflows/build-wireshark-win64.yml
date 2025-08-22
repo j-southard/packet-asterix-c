@@ -16,8 +16,10 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Where Wireshark's dependency bundle gets downloaded/unpacked by win-setup.ps1
+      # Parent folder for Wireshark libs
       WIRESHARK_BASE_DIR: C:\Development
+      # The libs directory MUST match *[/\]wireshark-*-libs-4.4
+      WIRESHARK_LIBS_DIR: C:\Development\wireshark-win64-libs-4.4
 
     steps:
       - name: Checkout (repo contains packet-asterix.c)
@@ -42,12 +44,12 @@ jobs:
       - name: Export Qt dir for Wireshark
         shell: powershell
         run: |
-          # install-qt-action sets QT_ROOT_DIR automatically
           "WIRESHARK_QT6_PREFIX_PATH=$env:QT_ROOT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Create base dir for downloaded libs
+      - name: Ensure base dir exists
         shell: powershell
-        run: New-Item -ItemType Directory -Force "C:\Development" | Out-Null
+        run: |
+          New-Item -ItemType Directory -Force "$env:WIRESHARK_BASE_DIR" | Out-Null
 
       - name: Clone Wireshark sources
         shell: cmd
@@ -69,22 +71,22 @@ jobs:
         run: |
           Set-ExecutionPolicy -Scope Process Bypass -Force
           Push-Location .\wireshark
-          # Fetch prebuilt deps for MSVC x64; we already installed Qt, so skip it
-          .\tools\win-setup.ps1 -Destination $env:WIRESHARK_BASE_DIR -InstallQt NO -Arch x64
+          .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -InstallQt NO -Arch x64
           Pop-Location
 
-      # Use cmd.exe so no MSYS2 env leaks into the build (avoids "Using MSYS2..." noise)
+      # Use cmd.exe so no MSYS2 env leaks into the build
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
         run: |
           cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 ^
-            -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%"
+            -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%" ^
+            -DWIRESHARK_BASE_DIR="%WIRESHARK_BASE_DIR%"
 
       - name: Build Wireshark
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark
 
-      # --- Optional: create regular installer (keep or delete if not needed) ---
+      # --- Optional: create regular installer ---
       - name: Prep NSIS packaging
         shell: cmd
         run: cmake --build build --config %CONFIG% --target wireshark_nsis_prep
