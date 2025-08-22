@@ -42,10 +42,23 @@ jobs:
         run: |
           Copy-Item -Force ".\packet-asterix.c" ".\wireshark\epan\dissectors\packet-asterix.c"
 
-      - name: Configure (CMake + VS 2022 x64)
-        shell: bash
+      - name: Bootstrap vcpkg
+        shell: powershell
         run: |
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64
+          git clone https://github.com/microsoft/vcpkg $env:RUNNER_TEMP\vcpkg
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat"
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
+
+      - name: Configure (CMake + VS 2022 x64 via vcpkg)
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}\vcpkg
+          VCPKG_FEATURE_FLAGS: "manifests,versions"
+        run: |
+          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build Wireshark
         shell: bash
