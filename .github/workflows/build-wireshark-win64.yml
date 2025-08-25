@@ -16,10 +16,10 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Parent folder for libraries
+      # Parent folder for libraries (used by win-setup.ps1)
       WIRESHARK_BASE_DIR: C:\Development
       # For Wireshark 4.4.x the libs dir must match this pattern
-      WIRESHARK_LIBS_DIR: C:\Development\wireshark-win64-libs-4.4
+      WIRESHARK_LIBS_DIR: C:\Development\wireshark-x64-libs-4.4
 
     steps:
       - name: Checkout (repo contains packet-asterix.c)
@@ -41,7 +41,7 @@ jobs:
           target: 'desktop'
           arch: 'win64_msvc2022_64'
           cache: true
-          modules: 'qt5compat qtmultimedia debug_info'   # <-- removed qttools
+          modules: 'qt5compat qtmultimedia debug_info'
 
       - name: Export Qt dir for Wireshark
         shell: powershell
@@ -77,26 +77,69 @@ jobs:
           .\tools\win-setup.ps1 -Destination "$env:WIRESHARK_LIBS_DIR" -Platform x64 -CMakeExecutable "$cmake"
           Pop-Location
 
-      # Use cmd.exe so no MSYS2 env leaks into the build
+      # Locate bcrypt.lib in the latest installed Windows 10/11 SDK and export for CMake
+      - name: Locate Windows SDK bcrypt.lib
+        shell: powershell
+        run: |
+          $base = 'C:\Program Files (x86)\Windows Kits\10\Lib'
+          $best = Get-ChildItem $base -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+                  Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $best) { throw "Windows 10/11 SDK not found under $base" }
+          $lib = Join-Path $best.FullName 'um\x64\bcrypt.lib'
+          if (-not (Test-Path $lib)) { throw "bcrypt.lib not found at $lib" }
+          "BCRYPT_LIB=$lib" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Use a VS toolchain environment so VCINSTALLDIR (and friends) are set
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
         run: |
+          for %%I in (Enterprise,Professional,Community) do (
+            if exist "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat" (
+              call "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat"
+              goto :okvc
+            )
+          )
+          :okvc
           cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 ^
             -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%" ^
-            -DWIRESHARK_BASE_DIR="%WIRESHARK_BASE_DIR%"
+            -DBcrypt_LIBRARY="%BCRYPT_LIB%"
 
       - name: Build Wireshark
         shell: cmd
-        run: cmake --build build --config %CONFIG% --target wireshark
+        run: |
+          for %%I in (Enterprise,Professional,Community) do (
+            if exist "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat" (
+              call "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat"
+              goto :okvc
+            )
+          )
+          :okvc
+          cmake --build build --config %CONFIG% --target wireshark
 
       # --- Optional: create regular installer ---
       - name: Prep NSIS packaging
         shell: cmd
-        run: cmake --build build --config %CONFIG% --target wireshark_nsis_prep
+        run: |
+          for %%I in (Enterprise,Professional,Community) do (
+            if exist "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat" (
+              call "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat"
+              goto :okvc
+            )
+          )
+          :okvc
+          cmake --build build --config %CONFIG% --target wireshark_nsis_prep
 
       - name: Build NSIS installer
         shell: cmd
-        run: cmake --build build --config %CONFIG% --target wireshark_nsis
+        run: |
+          for %%I in (Enterprise,Professional,Community) do (
+            if exist "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat" (
+              call "C:\Program Files\Microsoft Visual Studio\2022\%%I\VC\Auxiliary\Build\vcvars64.bat"
+              goto :okvc
+            )
+          )
+          :okvc
+          cmake --build build --config %CONFIG% --target wireshark_nsis
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
