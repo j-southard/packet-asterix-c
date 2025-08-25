@@ -33,7 +33,7 @@ jobs:
           choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install -y nsis 7zip winflexbison3
 
-      # Install Qt 6 + required add-ons for Wireshark (Core5Compat, Multimedia, Tools, debug info)
+      # Install Qt 6 + required add-ons for Wireshark
       - name: Install Qt 6 (MSVC 2022 x64)
         uses: jurplel/install-qt-action@v4
         with:
@@ -41,7 +41,7 @@ jobs:
           target: 'desktop'
           arch: 'win64_msvc2022_64'
           cache: true
-          modules: 'qt5compat qtmultimedia qttools debug_info'
+          modules: 'qt5compat qtmultimedia debug_info'   # <-- removed qttools
 
       - name: Export Qt dir for Wireshark
         shell: powershell
