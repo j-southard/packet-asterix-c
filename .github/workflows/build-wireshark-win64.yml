@@ -95,7 +95,7 @@ jobs:
           if (!(Test-Path $rcc)) { throw "Qt rcc not found at $rcc" }
           Write-Host "Found rcc at $rcc"
 
-      # --- NEW: Install Ruby + Asciidoctor so wireshark.html is generated ---
+      # Ruby + Asciidoctor: needed so wireshark.html exists for NSIS
       - name: Install Ruby
         shell: powershell
         run: choco install -y ruby
@@ -103,7 +103,6 @@ jobs:
       - name: Install Asciidoctor gem
         shell: powershell
         run: |
-          # Find Ruby bin and put it on PATH for this and later steps
           $rubyBin = (Get-ChildItem 'C:\tools' -Directory -Filter 'ruby*' | Sort-Object Name -Descending | Select-Object -First 1).FullName + '\bin'
           if (-not (Test-Path $rubyBin)) { $rubyBin = 'C:\Ruby31-x64\bin' }
           $env:Path = "$rubyBin;$env:Path"
@@ -138,7 +137,8 @@ jobs:
           :okvc
           cmake --build build --config %CONFIG% --target qtui
 
-      - name: Build Wireshark
+      # --- Build required binaries for packaging (fixes missing dumpcap.exe) ---
+      - name: Build core binaries (wireshark + tshark + dumpcap)
         shell: cmd
         run: |
           for %%I in (Enterprise,Professional,Community) do (
@@ -148,9 +148,11 @@ jobs:
             )
           )
           :okvc
-          cmake --build build --config %CONFIG% --target wireshark
+          cmake --build build --config %CONFIG% --target wireshark tshark dumpcap
 
-      # Build docs + prep packaging (docs need Asciidoctor to produce wireshark.html)
+      # You can also use: cmake --build build --config %CONFIG% --target ALL_BUILD
+
+      # Build docs + prep packaging (now the files exist in run\RelWithDebInfo)
       - name: Prep NSIS packaging
         shell: cmd
         run: |
