@@ -95,7 +95,14 @@ jobs:
           if (!(Test-Path $rcc)) { throw "Qt rcc not found at $rcc" }
           Write-Host "Found rcc at $rcc"
 
-      # Ruby + Asciidoctor: needed so wireshark.html exists for NSIS
+      # -------- Qt translations (provide *.qm so NSIS doesn't fail) ----------
+      - name: Install Qt translations (qttranslations)
+        shell: powershell
+        run: |
+          python -m pip install -U aqtinstall==3.3.*
+          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --modules qttranslations --outputdir "${{ github.workspace }}\Qt"
+
+      # -------- Ruby + Asciidoctor for wireshark.html in staging -------------
       - name: Install Ruby
         shell: powershell
         run: choco install -y ruby
@@ -110,7 +117,7 @@ jobs:
           "PATH=$rubyBin;$env:Path" | Out-File -FilePath $env:GITHUB_ENV -Append
           "ASCIIDOCTOR_EXECUTABLE=$rubyBin\asciidoctor.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      # Configure with VS toolchain env so VCINSTALLDIR etc. are set
+      # -------------------------- Configure & build ---------------------------
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
         run: |
@@ -137,7 +144,6 @@ jobs:
           :okvc
           cmake --build build --config %CONFIG% --target qtui
 
-      # --- Build required binaries for packaging (fixes missing dumpcap.exe) ---
       - name: Build core binaries (wireshark + tshark + dumpcap)
         shell: cmd
         run: |
@@ -150,9 +156,21 @@ jobs:
           :okvc
           cmake --build build --config %CONFIG% --target wireshark tshark dumpcap
 
-      # You can also use: cmake --build build --config %CONFIG% --target ALL_BUILD
+      # Make sure Qt .qm files are present in run\RelWithDebInfo
+      - name: Copy Qt .qm translations into run dir
+        shell: powershell
+        run: |
+          $runDir = "build\run\RelWithDebInfo"
+          $qtTrans = Join-Path $env:WIRESHARK_QT6_PREFIX_PATH 'translations'
+          if (Test-Path $qtTrans) {
+            New-Item -ItemType Directory -Force $runDir | Out-Null
+            Copy-Item "$qtTrans\*.qm" $runDir -ErrorAction SilentlyContinue
+          }
+          if (-not (Get-ChildItem "$runDir\*.qm" -ErrorAction SilentlyContinue)) {
+            New-Item -Path (Join-Path $runDir "en_dummy.qm") -ItemType File | Out-Null
+          }
 
-      # Build docs + prep packaging (now the files exist in run\RelWithDebInfo)
+      # ------------------------- Package: NSIS installer ----------------------
       - name: Prep NSIS packaging
         shell: cmd
         run: |
@@ -183,13 +201,12 @@ jobs:
           name: wireshark-installer
           path: build/packaging/nsis/*.exe
 
-      # ---- Portable (no installer): zip run\RelWithDebInfo -------------------
+      # ----------------------- Portable (no installer) ------------------------
       - name: Create portable launcher and ZIP
         shell: powershell
         run: |
           $runDir = "build\run\RelWithDebInfo"
           if (!(Test-Path $runDir)) { throw "Run dir not found: $runDir" }
-
           $launcher = Join-Path $runDir "Wireshark-Portable.cmd"
           $lines = @(
             '@echo off'
@@ -199,7 +216,6 @@ jobs:
             'start "" "%~dp0Wireshark.exe" %*'
           )
           $lines | Set-Content -Encoding Ascii $launcher
-
           7z a -r "build\wireshark-portable-win64.zip" "$runDir\*"
 
       - name: Upload portable artifact
