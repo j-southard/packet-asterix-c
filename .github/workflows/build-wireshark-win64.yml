@@ -16,9 +16,7 @@ jobs:
     runs-on: windows-2022
     env:
       CONFIG: RelWithDebInfo
-      # Parent folder for libraries (used by win-setup.ps1)
       WIRESHARK_BASE_DIR: C:\Development
-      # For Wireshark 4.4.x the libs dir must match this pattern
       WIRESHARK_LIBS_DIR: C:\Development\wireshark-x64-libs-4.4
 
     steps:
@@ -33,7 +31,6 @@ jobs:
           choco install -y cmake --version=3.27.9 --allow-downgrade --installargs 'ADD_CMAKE_TO_PATH=System'
           choco install -y nsis 7zip winflexbison3
 
-      # Install Qt 6 + add-ons Wireshark needs
       - name: Install Qt 6 (MSVC 2022 x64)
         uses: jurplel/install-qt-action@v4
         with:
@@ -50,8 +47,7 @@ jobs:
 
       - name: Ensure base dir exists
         shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force "$env:WIRESHARK_BASE_DIR" | Out-Null
+        run: New-Item -ItemType Directory -Force "$env:WIRESHARK_BASE_DIR" | Out-Null
 
       - name: Clone Wireshark sources
         shell: cmd
@@ -99,6 +95,22 @@ jobs:
           if (!(Test-Path $rcc)) { throw "Qt rcc not found at $rcc" }
           Write-Host "Found rcc at $rcc"
 
+      # --- NEW: Install Ruby + Asciidoctor so wireshark.html is generated ---
+      - name: Install Ruby
+        shell: powershell
+        run: choco install -y ruby
+
+      - name: Install Asciidoctor gem
+        shell: powershell
+        run: |
+          # Find Ruby bin and put it on PATH for this and later steps
+          $rubyBin = (Get-ChildItem 'C:\tools' -Directory -Filter 'ruby*' | Sort-Object Name -Descending | Select-Object -First 1).FullName + '\bin'
+          if (-not (Test-Path $rubyBin)) { $rubyBin = 'C:\Ruby31-x64\bin' }
+          $env:Path = "$rubyBin;$env:Path"
+          gem install asciidoctor --no-document
+          "PATH=$rubyBin;$env:Path" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ASCIIDOCTOR_EXECUTABLE=$rubyBin\asciidoctor.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       # Configure with VS toolchain env so VCINSTALLDIR etc. are set
       - name: Configure (CMake + VS 2022 x64)
         shell: cmd
@@ -110,9 +122,10 @@ jobs:
             )
           )
           :okvc
-          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%" -DBcrypt_LIBRARY="%BCRYPT_LIB%"
+          cmake -S wireshark -B build -G "Visual Studio 17 2022" -A x64 ^
+            -DCMAKE_PREFIX_PATH="%WIRESHARK_QT6_PREFIX_PATH%" ^
+            -DBcrypt_LIBRARY="%BCRYPT_LIB%"
 
-      # One-time prebuild to ensure Qt ui objlib is generated before linking main target
       - name: Prebuild Qt UI objlib
         shell: cmd
         run: |
@@ -137,7 +150,7 @@ jobs:
           :okvc
           cmake --build build --config %CONFIG% --target wireshark
 
-      # --- Optional: create regular installer ---
+      # Build docs + prep packaging (docs need Asciidoctor to produce wireshark.html)
       - name: Prep NSIS packaging
         shell: cmd
         run: |
@@ -175,7 +188,6 @@ jobs:
           $runDir = "build\run\RelWithDebInfo"
           if (!(Test-Path $runDir)) { throw "Run dir not found: $runDir" }
 
-          # Tiny launcher that keeps prefs beside the EXE (no clash with installed Wireshark)
           $launcher = Join-Path $runDir "Wireshark-Portable.cmd"
           $lines = @(
             '@echo off'
@@ -186,7 +198,6 @@ jobs:
           )
           $lines | Set-Content -Encoding Ascii $launcher
 
-          # Zip the self-contained run directory
           7z a -r "build\wireshark-portable-win64.zip" "$runDir\*"
 
       - name: Upload portable artifact
